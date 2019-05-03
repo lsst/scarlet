@@ -12,13 +12,16 @@ import warnings
 
 pybind11_path = None
 if "PYBIND11_DIR" in os.environ:
-    pybind11_path = os.environ["PYBIND11_DIR"] 
+    pybind11_path = os.environ["PYBIND11_DIR"]
 eigen_path = None
 if "EIGEN_DIR" in os.environ:
     eigen_path = os.environ["EIGEN_DIR"]
 
 # Use the firt 7 digits of the git hash to set the version
-__version__ = '0.3.'+subprocess.check_output(['git', 'rev-parse', 'HEAD'])[:7].decode("utf-8")
+try:
+    __version__ = '0.5.'+subprocess.check_output(['git', 'rev-parse', 'HEAD'])[:7].decode("utf-8")
+except:
+    __version__ = '0.5.0'
 
 packages = []
 for root, dirs, files in os.walk('.'):
@@ -122,7 +125,8 @@ class BuildExt(build_ext):
             ext.extra_compile_args = opts
         build_ext.build_extensions(self)
 
-install_requires = ['numpy', 'scipy', 'proxmin>=0.5.1']
+
+install_requires = ['numpy', 'proxmin>=0.5.3']
 # Only require the pybind11 and peigen packages if
 # the C++ headers are not already installed
 if pybind11_path is None:
@@ -132,16 +136,16 @@ if eigen_path is None:
 
 
 setup(
-  name = 'scarlet',
-  packages = packages,
-  version = __version__,
-  description = 'Blind Source Separation using proximal matrix factorization',
-  author = 'Fred Moolekamp and Peter Melchior',
-  author_email = 'fred.moolekamp@gmail.com',
-  url = 'https://github.com/fred3m/scarlet',
-  keywords = ['astro', 'deblending', 'photometry', 'nmf'],
-  ext_modules=ext_modules,
-  install_requires=install_requires,
-  cmdclass={'build_ext': BuildExt},
-  zip_safe=False,
+    name='scarlet',
+    packages=packages,
+    version=__version__,
+    description='Blind Source Separation using proximal matrix factorization',
+    author='Fred Moolekamp and Peter Melchior',
+    author_email='fred.moolekamp@gmail.com',
+    url='https://github.com/fred3m/scarlet',
+    keywords=['astro', 'deblending', 'photometry', 'nmf'],
+    ext_modules=ext_modules,
+    install_requires=install_requires,
+    cmdclass={'build_ext': BuildExt},
+    zip_safe=False,
 )
