@@ -250,7 +250,7 @@ class PointSource(Component):
             sed[b0:b0+obs.B] = obs.images[:, pixel[0], pixel[1]]
             b0 += obs.B
 
-        super().__init__(self, sed, morph, **component_kwargs)
+        super().__init__(sed, morph, **component_kwargs)
         self.symmetric = symmetric
         self.monotonic = monotonic
         self.center_step = center_step
@@ -262,20 +262,10 @@ class PointSource(Component):
         This method can be overwritten if a different set of constraints
         or update functions is desired.
         """
+        self.gradient_step()
+
         it = self._parent.it
-        # Update the central pixel location (pixel_center)
-        if self.center_step is not None and (it-1) % self.center_step == 0:
-            # update the fractional center position
-            try:
-                update.fit_pixel_center(self)
-                self.float_center = self.pixel_center
-                update.symmetric_fit_center(self)
-            except update.RecenteringError:
-                err = "Failed in recentering for source at {0} in iteration {1}"
-                print(err.format(self.pixel_center, it))
-                if not hasattr(self, "float_center"):
-                    self.float_center = self.pixel_center
-                    self.shift = (0, 0)
+        update.fit_pixel_center(self)
 
         if it > self.delay_thresh:
             update.threshold(self)
