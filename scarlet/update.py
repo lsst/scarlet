@@ -110,11 +110,17 @@ def sparse_l1(component, thresh):
     return component
 
 
-def _threshold(morph):
+def _threshold(morph, noise=None):
     """Find the threshold value for a given morphology
     """
     _morph = morph[morph > 0]
     _bins = 50
+    # THIS REALLY NEEDS TO BE DONE RIGHT
+    # we propagate the noise the source was initialized with, but
+    # the value is WAY to high, like 0.1, because it needs to be
+    # scaled by the factor the morphology is normalized by, this
+    # is future work, for now setting it to some small number
+    noise = 1e-4
     # Decrease the bin size for sources with a small number of pixels
     if _morph.size < 500:
         _bins = max(np.int(_morph.size/10), 1)
@@ -125,7 +131,11 @@ def _threshold(morph):
     # If all of the pixels are used there is no need to threshold
     if len(cutoff) == 0:
         return 0, _bins
-    return 10**bins[cutoff[-1]], _bins
+    if noise is not None:
+        adjusted = np.min((bins[cutoff[-1]], np.log10(noise)))
+    else:
+        adjusted = bins[cutoff[-1]]
+    return 10**adjusted, _bins
 
 
 def threshold(component):
@@ -137,7 +147,12 @@ def threshold(component):
     diffuse galaxies with a wide range of pixel values this
     does not work as well.
     """
-    thresh, _bins = _threshold(component.morph)
+    index = np.argmax(component.sed)
+    if component.noise_level is not None:
+        noise = component.noise_level[index]
+    else:
+        noise = None
+    thresh, _bins = _threshold(component.morph, noise)
     component.morph[component.morph < thresh] = 0
     bbox = trim(component.morph)
     if not hasattr(component, "bboxes"):
@@ -196,6 +211,129 @@ def monotonic(component, pixel_center, use_nearest=False, thresh=0, exact=False,
     else:
         component.morph[:] = morph
     return component
+
+
+def psf_weighted_centroid(component):
+    # Extract the arrays from the component
+    morph = component.morph
+    psf = component.psf
+
+    py, px = component.pixel_center
+    if psf is None:
+        pindy, pindx = np.indices((5, 5))
+        psf = np.exp(-1/2*((pindx-2)**2 + (pindy-2)**2))
+
+    # Determine the width of the psf
+    psf_shape_y, psf_shape_x = psf.shape
+    # These are all the same value because psf are square and odd, but using
+    # multiple variable names to clarify things
+    x_rad = y_rad = psf_peak_y = psf_peak_x = psf_shape_x//2
+
+    # Determine the overlapping coordinates of the morphology image and the psf
+    # this is needed if the psf image, centered at the peak pixel location goes
+    # off the edge of the psf array
+    y_morph_ext = np.arange(morph.shape[0])
+    x_morph_ext = np.arange(morph.shape[1])
+
+    # calculate the offset in the morph frame such that the center pixel aligns
+    # with the psf coordindate frame, where the psf peak is in the center
+    y_morph_ext = y_morph_ext - py
+    x_morph_ext = x_morph_ext - px
+
+    # Compare the two end points, and take whichever is the smaller radius
+    # use that to select the entries that are equal to or below that radius
+    # Find the minimum between the end points (if the psf goes off the edge,
+    # and the radius of the psf
+    rad_endpoints_y = np.min((abs(y_morph_ext[0]), abs(y_morph_ext[-1]), y_rad))
+    rad_endpoints_x = np.min((abs(x_morph_ext[0]), abs(x_morph_ext[-1]), x_rad))
+    trimmed_y_range = y_morph_ext[abs(y_morph_ext) <= rad_endpoints_y]
+    trimmed_x_range = x_morph_ext[abs(x_morph_ext) <= rad_endpoints_x]
+
+    psf_y_range = trimmed_y_range + psf_peak_y
+    psf_x_range = trimmed_x_range + psf_peak_x
+
+    morph_y_range = trimmed_y_range + py
+    morph_x_range = trimmed_x_range + px
+
+    # Use these arrays to get views of the morphology and psf
+    morph_view = morph[morph_y_range][:, morph_x_range]
+    psf_view = psf[psf_y_range][:, psf_x_range]
+
+    morph_view_weighted = morph_view*psf_view
+    morph_view_weighted_sum = np.sum(morph_view_weighted)
+    # build the indices to use the the centroid calculation
+    indy, indx = np.indices(psf_view.shape)
+    first_moment_y = np.sum(indy*morph_view_weighted) / morph_view_weighted_sum
+    first_moment_x = np.sum(indx*morph_view_weighted) / morph_view_weighted_sum
+    # build the offset to go from psf_view frame to psf frame to morph frame
+    # aka move the peak back by the radius of the psf width adusted for the
+    # minimum point in the view
+    offset = (morph_y_range[0], morph_x_range[0])
+
+    whole_pixel_center = np.round((first_moment_y, first_moment_x))
+    dy, dx = whole_pixel_center - (first_moment_y, first_moment_x)
+    morph_pixel_center = tuple((whole_pixel_center + offset).astype(int))
+    component.pixel_center = morph_pixel_center
+    component.shift = (dy, dx)
+    return component
+
+
+def symmeterize_kspace(component, bbox=None, pad_multiplier=1):
+    dy, dx = component.shift
+    cy, cx = component.pixel_center
+    if bbox is not None:
+        morph = component.morph[bbox.slices]
+        slices = bbox.slices
+        cy = cy - bbox.bottom
+        cx = cx - bbox.left
+    else:
+        morph = component.morph
+        slices = (slice(0, morph.shape[0], 1), slice(0, morph.shape[1], 1))
+
+    result = operator.uncentered_operator(morph, wraped_symmeterized_kspace,
+                                          center=(cy, cx), dy=dy, dx=dx,
+                                          pad_multiplier=pad_multiplier)
+    component.morph[slices] = result
+    return component
+
+
+def wraped_symmeterized_kspace(morph, dy, dx, pad_multiplier):
+    # Record the morph shape
+    shape = morph.shape
+    morph = morph.astype(np.float64)
+    # This may need turned in to a float if there is weird behavior
+    padding = np.max(morph.shape)//2*pad_multiplier
+    edges = ((padding, padding), (padding, padding))
+    corner = (padding, padding)
+    zeroMask = morph <= 0
+    morph[zeroMask] = 0
+    morph = np.pad(morph, edges, 'constant')
+    freq_x = np.fft.fftfreq(morph.shape[1])
+    freq_y = np.fft.fftfreq(morph.shape[0])
+
+    # Transform to k space
+    kmorph = np.fft.fft2(np.fft.ifftshift(morph))
+
+    # Shift the signal to recenter it, negative because math is opposite from
+    # pixel direction
+    shifter = np.outer(np.exp(-1j*2*np.pi*freq_y*-(dy)),
+                       np.exp(-1j*2*np.pi*freq_x*-(dx)))
+
+    kmorph_shift = kmorph*shifter
+    # symmeterize
+    kmorph_shift_sym = np.real(kmorph_shift)
+
+    # Shift back
+    kmorph_shift_back = kmorph_shift_sym*np.outer(np.exp(-1j*2*np.pi*freq_y*(dy)),
+                                                  np.exp(-1j*2*np.pi*freq_x*(dx)))
+
+    # Transform to real space
+    sym_morph = np.fft.fftshift(np.fft.ifft2(kmorph_shift_back))
+    # Return the unpadded transform
+    sym_morph_unpad = np.real(sym_morph[corner[0]:corner[0]+shape[0], corner[1]:corner[1]+shape[1]])
+    sym_morph_unpad[zeroMask] = 0
+    assert sym_morph_unpad.shape == shape
+    return sym_morph_unpad.astype(float)
 
 
 def translation(component, direction=1, kernel=interpolation.lanczos, padding=3):

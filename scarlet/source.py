@@ -143,6 +143,7 @@ def init_extended_source(sky_coord, scene, observations, bg_rms, obs_idx=0,
     cy, cx = center
     center_morph = morph[cy, cx]
     morph /= center_morph
+
     return sed, morph
 
 
@@ -242,6 +243,7 @@ class PointSource(Component):
             morph[bb] = scene.psfs[ibb]
 
         self.pixel_center = pixel
+        self.psf = scene.psf
 
         sed = np.zeros((B,), observations[0].images.dtype)
         b0 = 0
@@ -249,6 +251,8 @@ class PointSource(Component):
             pixel = obs.get_pixel(sky_coord)
             sed[b0:b0+obs.B] = obs.images[:, pixel[0], pixel[1]]
             b0 += obs.B
+
+        self.noise_level = component_kwargs.get("bg_rms", None)
 
         super().__init__(sed, morph, **component_kwargs)
         self.symmetric = symmetric
@@ -262,21 +266,21 @@ class PointSource(Component):
         This method can be overwritten if a different set of constraints
         or update functions is desired.
         """
+        it = self._parent.it
         self.gradient_step()
 
-        it = self._parent.it
-        update.fit_pixel_center(self)
+        update.psf_weighted_centroid(self)
 
         if it > self.delay_thresh:
             update.threshold(self)
 
         if self.symmetric:
-            # Translate to the centered frame
-            update.translation(self, 1)
-            # make the morphology perfectly symmetric
-            update.symmetric(self, strength=1)
-            # Translate back to the model frame
-            update.translation(self, -1)
+            # Get the thresh bbox if there is one
+            if hasattr(self, "bboxes"):
+                bbox = self.bboxes.get("thresh", None)
+            else:
+                bbox = None
+            update.symmeterize_kspace(self, bbox=bbox)
 
         if self.monotonic:
             # make the morphology monotonically decreasing
@@ -284,7 +288,6 @@ class PointSource(Component):
                 update.monotonic(self, self.pixel_center, bbox=self.bboxes["thresh"])
             else:
                 update.monotonic(self, self.pixel_center)
-
         update.positive(self)  # Make the SED and morph non-negative
         update.normalized(self)  # Use MORPH_MAX normalization
         return self
@@ -326,10 +329,12 @@ class ExtendedSource(PointSource):
         self.pixel_center = center
         self.center_step = center_step
         self.delay_thresh = delay_thresh
+        self.noise_level = bg_rms
 
         sed, morph = init_extended_source(sky_coord, scene, observations, bg_rms, obs_idx,
                                           thresh, True, monotonic)
 
+        self.psf = scene.psfs
         Component.__init__(self, sed, morph, **component_kwargs)
 
 
