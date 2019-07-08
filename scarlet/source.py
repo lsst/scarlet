@@ -3,7 +3,9 @@ import autograd.numpy as np
 from .component import Component, ComponentTree
 from . import operator
 from . import update
+from . import measurement
 from .interpolation import get_projection_slices
+from .psf import generate_psf_image, gaussian
 
 import logging
 
@@ -59,7 +61,7 @@ def get_best_fit_seds(morphs, frame, observation):
     morphs: list
         Morphology for each component in the source.
     frame: `scarlet.observation.frame`
-        The frame that the model lives in.
+        The frame of the model
     observation: `~scarlet.Observation`
         Observation to extract SEDs from.
     """
@@ -120,7 +122,7 @@ def init_extended_source(sky_coord, frame, observation, bg_rms,
 
     # Apply the necessary constraints
     if symmetric:
-        morph = operator.prox_uncentered_symmetry(morph, 0, center=center, use_soft=False)
+        morph = operator.prox_uncentered_symmetry(morph, 0, center=center, algorithm="sdss")
     if monotonic:
         # use finite thresh to remove flat bridges
         prox_monotonic = operator.prox_strict_monotonic(morph.shape, use_nearest=False,
@@ -166,7 +168,7 @@ def init_combined_extended_source(sky_coord, frame, observations, bg_rms, obs_id
 
     # Apply the necessary constraints
     if symmetric:
-        morph = operator.prox_uncentered_symmetry(morph, 0, center=center, use_soft=False)
+        morph = operator.prox_uncentered_symmetry(morph, 0, center=center, algorithm="sdss")
 
     if monotonic:
         # use finite thresh to remove flat bridges
@@ -227,6 +229,36 @@ def init_multicomponent_source(sky_coord, frame, observation, bg_rms, flux_perce
     return seds, morphs
 
 
+class RandomSource(Component):
+    """Sources with uniform random morphology.
+
+    For cases with no well-defined spatial shape, this source initializes
+    a uniform random field and (optionally) matches the SED to match a given
+    observation.
+    """
+    def __init__(self, frame, observation=None, **component_kwargs):
+        """Source intialized with a single pixel
+
+        Parameters
+        ----------
+        frame: `~scarlet.Frame`
+            The frame of the model
+        observation: list of `~scarlet.Observation`
+            Observation to initialize the SED of the source
+        component_kwargs: dict
+            Keyword arguments to pass to the component initialization.
+        """
+        C, Ny, Nx = frame.shape
+        morph = np.random.rand(Ny, Nx)
+
+        if observation is None:
+            sed = np.random.rand(C)
+        else:
+            sed = get_best_fit_seds(morph[None], frame, observation)[0]
+
+        super().__init__(frame, sed, morph, **component_kwargs)
+
+
 class PointSource(Component):
     """Source intialized with a single pixel
 
@@ -235,14 +267,14 @@ class PointSource(Component):
     While the source can have any `constraints`, the default constraints are
     symmetry and monotonicity.
     """
-    def __init__(self, frame, sky_coord, observation, symmetric=False, monotonic=True,
+    def __init__(self, frame, sky_coord, observation, symmetric=True, monotonic=True,
                  center_step=5, delay_thresh=10, **component_kwargs):
         """Source intialized with a single pixel
 
         Parameters
         ----------
         frame: `~scarlet.Frame`
-            The frame that the model lives in.
+            The frame of the model
         sky_coord: tuple
             Center of the source
         observation: list of `~scarlet.Observation`
@@ -289,6 +321,18 @@ class PointSource(Component):
         self.monotonic = monotonic
         self.center_step = center_step
         self.delay_thresh = delay_thresh
+
+        # create PSF as weight for centroid measurements
+        if self.symmetric:
+            if self.frame.psfs is None:
+                shape = (41, 41)
+                psf = generate_psf_image(gaussian, shape, amplitude=1, sigma=.9)
+                psf /= psf.max()
+                self._centroid_weight = psf
+            else:
+                self._centroid_weight = self.frame.psfs[0]
+
+        # ensure adherence to constraints
         self.update()
 
     def update(self):
@@ -301,25 +345,31 @@ class PointSource(Component):
             it = 0
         else:
             it = self._parent.it
+
         # Update the central pixel location (pixel_center)
-        update.fit_pixel_center(self)
-        if it > self.delay_thresh:
-            update.threshold(self)
+        self.pixel_center = measurement.max_pixel(self.morph, self.pixel_center)
+
+        # Thresholding needs to be fixed (DM-10190)
+        # if it > self.delay_thresh:
+        #     update.threshold(self)
+
+        # If there is a threshold bounding box, use it
+        if hasattr(self, "bboxes") and "thresh" in self.bboxes:
+            bbox = self.bboxes["thresh"]
+        else:
+            bbox = None
 
         if self.symmetric:
-            # Translate to the centered frame
-            update.translation(self, 1)
+            # Update the centroid position
+            if it % 5 == 0:
+                self.pixel_center, self.shift = measurement.psf_weighted_centroid(self.morph, self._centroid_weight, self.pixel_center)
+
             # make the morphology perfectly symmetric
-            update.symmetric(self, strength=1)
-            # Translate back to the model frame
-            update.translation(self, -1)
+            update.symmetric(self, algorithm="kspace", bbox=bbox)
 
         if self.monotonic:
             # make the morphology monotonically decreasing
-            if hasattr(self, "bboxes") and "thresh" in self.bboxes:
-                update.monotonic(self, self.pixel_center, bbox=self.bboxes["thresh"])
-            else:
-                update.monotonic(self, self.pixel_center)
+            update.monotonic(self, self.pixel_center, bbox=bbox)
 
         update.positive(self)  # Make the SED and morph non-negative
         update.normalized(self)  # Use MORPH_MAX normalization
@@ -328,13 +378,13 @@ class PointSource(Component):
 
 class ExtendedSource(PointSource):
     def __init__(self, frame, sky_coord, observation, bg_rms, thresh=1,
-                 symmetric=False, monotonic=True, center_step=5, delay_thresh=10, **component_kwargs):
+                 symmetric=True, monotonic=True, center_step=5, delay_thresh=10, **component_kwargs):
         """Extended source intialized to match a set of observations
 
         Parameters
         ----------
         frame: `~scarlet.Frame`
-            The frame that the model lives in.
+            The frame of the model
         sky_coord: tuple
             Center of the source
         observation: `~scarlet.observation.Observation`
@@ -364,6 +414,17 @@ class ExtendedSource(PointSource):
                                           thresh, True, monotonic)
 
         Component.__init__(self, frame, sed, morph, **component_kwargs)
+
+        # create PSF as weight for centroid measurements
+        if self.symmetric:
+            if self.frame.psfs is None:
+                shape = (41, 41)
+                psf = generate_psf_image(gaussian, shape, amplitude=1, sigma=.9)
+                psf /= psf.max()
+                self._centroid_weight = psf
+            else:
+                self._centroid_weight = self.frame.psfs[0]
+
         self.update()
 
 
@@ -375,7 +436,7 @@ class CombinedExtendedSource(PointSource):
         Parameters
         ----------
         frame: `~scarlet.Frame`
-            The frame that the model lives in.
+            The frame of the model
         sky_coord: tuple
             Center of the source
         observations: list of `~scarlet.Observation`
@@ -429,7 +490,7 @@ class MultiComponentSource(ComponentTree):
         Parameters
         ----------
         frame: `~scarlet.Frame`
-            The frame that the model lives in.
+            The frame of the model
         sky_coord: tuple
             Center of the source
         observation: `~scarlet.Observation`
