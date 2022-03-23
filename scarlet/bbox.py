@@ -174,6 +174,32 @@ class Box:
         shape = tuple([self.shape[d]+2*radius[d] for d in range(self.D)])
         return Box(shape, origin=origin)
 
+    def shift(self, shift):
+        """Shift this box in-place
+
+        Parameters
+        ----------
+        shift: tuple of `int`
+            A tuple the same shape as `origin` to shift this box along each axis.
+        """
+        self.origin = tuple(o + shift[i] for i, o in enumerate(self.origin))
+
+    def shifted_by(self, shift):
+        """Generate a shifted copy of this box
+
+        Parameters
+        ----------
+        shift: tuple of `int`
+            The amount to shift each axis to create the new box
+
+        Returns
+        -------
+        result: `Box`
+            The resulting bounding box.
+        """
+        origin = tuple(o + shift[i] for i, o in enumerate(self.origin))
+        return Box(self.shape, origin=origin)
+
     def __or__(self, other):
         """Union of two bounding boxes
 

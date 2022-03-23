@@ -8,6 +8,10 @@ import numpy as np
 import proxmin
 
 
+# The default factor used for adaprox parameter steps
+DEFAULT_FACTOR = 1e-2
+
+
 def grow_array(x, new_shape, dist):
     """grow an array and pad it with zeros
 
@@ -315,3 +319,19 @@ class AdaproxParameter(LiteParameter):
         self.m = self.m[dist:-dist, dist:-dist]
         self.v = self.v[dist:-dist, dist:-dist]
         self.vhat = self.vhat[dist:-dist, dist:-dist]
+
+
+class FixedParameter(LiteParameter):
+    """A parameter that is not updated
+    """
+    def __init__(self, x):
+        self.x = x
+
+    def update(self, it, input_grad, *args):
+        pass
+
+    def grow(self, new_shape, dist):
+        pass
+
+    def shrink(self, dist):
+        pass
