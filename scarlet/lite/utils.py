@@ -75,7 +75,7 @@ def project_morph_to_center(morph, center, bbox, fullbox, boxsize=None):
     """
     # find fitting bbox
     if bbox.contains(center):
-        size = 2 * max(
+        size = 2*max(
             (
                 center[0] - bbox.start[-2],
                 bbox.stop[0] - center[-2],
@@ -90,10 +90,10 @@ def project_morph_to_center(morph, center, bbox, fullbox, boxsize=None):
     if boxsize is None:
         boxsize = get_minimal_boxsize(size)
 
-    bottom = center[0] - boxsize // 2
-    top = center[0] + boxsize // 2 + 1
-    left = center[1] - boxsize // 2
-    right = center[1] + boxsize // 2 + 1
+    bottom = center[0] - boxsize//2
+    top = center[0] + boxsize//2 + 1
+    left = center[1] - boxsize//2
+    right = center[1] + boxsize//2 + 1
     centered_box = Box.from_bounds((bottom, top), (left, right))
 
     centered = np.zeros(centered_box.shape, dtype=morph.dtype)
@@ -103,7 +103,7 @@ def project_morph_to_center(morph, center, bbox, fullbox, boxsize=None):
     return centered, centered_box
 
 
-def integrated_gaussian(X, sigma):
+def integrated_gaussian_psf(X, sigma):
     """A Gaussian function evaluated at `X`
 
     Parameters
@@ -119,9 +119,9 @@ def integrated_gaussian(X, sigma):
         A Gaussian function integrated over `X`
     """
     sqrt2 = np.sqrt(2)
-    lhs = erfc((0.5 - X) / (sqrt2 * sigma))
-    rhs = erfc((2 * X + 1) / (2 * sqrt2 * sigma))
-    return np.sqrt(np.pi / 2) * sigma * (1-lhs + 1-rhs)
+    lhs = erfc((0.5 - X)/(sqrt2*sigma))
+    rhs = erfc((2*X + 1)/(2*sqrt2*sigma))
+    return np.sqrt(np.pi/2)*sigma*(1 - lhs + 1 - rhs)
 
 
 def integrated_circular_gaussian(X=None, Y=None, sigma=0.8):
@@ -152,7 +152,7 @@ def integrated_circular_gaussian(X=None, Y=None, sigma=0.8):
         else:
             raise Exception(
                 f"Either X and Y must be specified, or neither must be specified, got X={X} and Y={Y}")
-    result = integrated_gaussian(X, sigma)[None, :] * integrated_gaussian(Y, sigma)[:, None]
+    result = integrated_gaussian_psf(X, sigma)[None, :]*integrated_gaussian_psf(Y, sigma)[:, None]
     return result/np.sum(result)
 
 
@@ -174,17 +174,17 @@ def get_circle_mask(diameter, dtype=np.float64):
         inside of the circle and zeros
         outside of the circle.
     """
-    c = (diameter-1) / 2
+    c = (diameter - 1)/2
     # The center of the circle and its radius are
     # off by half a pixel for circles with
     # even numbered diameter
     if diameter % 2 == 0:
-        r = (diameter)/2
+        r = diameter/2
     else:
         r = c
     X = np.arange(diameter)
-    X, Y = np.meshgrid(X,X)
-    R = np.sqrt((X-c)**2 + (Y-c)**2)
+    X, Y = np.meshgrid(X, X)
+    R = np.sqrt((X - c)**2 + (Y - c)**2)
 
     circle = np.ones((diameter, diameter), dtype=dtype)
     circle[R>r] = 0
