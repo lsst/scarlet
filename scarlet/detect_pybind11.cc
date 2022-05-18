@@ -243,7 +243,8 @@ std::vector<Footprint> get_footprints(
     Eigen::Ref<const M> image,
     const double min_separation,
     const int min_area,
-    const int thresh
+    const int thresh,
+    const bool find_peaks=true
 ){
     const int height = image.rows();
     const int width = image.cols();
@@ -264,12 +265,16 @@ std::vector<Footprint> get_footprints(
                 if(area >= min_area){
                     M patch = image.block(bounds[0], bounds[2], subHeight, subWidth);
                     maskImage<M>(patch, subFootprint);
-                    std::vector<Peak> _peaks = get_peaks(
-                        patch,
-                        min_separation,
-                        bounds[0],
-                        bounds[2]
-                    );
+                    std::vector<Peak> _peaks;
+                    if(find_peaks){
+                        _peaks = get_peaks(
+                            patch,
+                            min_separation,
+                            bounds[0],
+                            bounds[2]
+                        );
+                    }
+
                     footprints.push_back(Footprint(subFootprint, _peaks, bounds));
                 }
             }
@@ -299,10 +304,10 @@ PYBIND11_MODULE(detect_pybind11, mod) {
 
   mod.def("get_footprints", &get_footprints<MatrixF, float>,
           "Create a list of all of the footprints in an image, with their peaks"
-          "image"_a, "min_separation"_a, "min_area"_a, "thresh"_a);
+          "image"_a, "min_separation"_a, "min_area"_a, "thresh"_a, "find_peaks"_a);
   mod.def("get_footprints", &get_footprints<MatrixD, double>,
           "Create a list of all of the footprints in an image, with their peaks"
-          "image"_a, "min_separation"_a, "min_area"_a, "thresh"_a);
+          "image"_a, "min_separation"_a, "min_area"_a, "thresh"_a, "find_peaks"_a);
 
   py::class_<Footprint>(mod, "Footprint")
         .def(py::init<MatrixB, std::vector<Peak>, Bounds>(),
