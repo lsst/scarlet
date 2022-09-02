@@ -328,7 +328,7 @@ class Chi2InitParameters:
     It also creates temporary objects that only need to be created once for
     all of the sources in a blend.
     """
-    def __init__(self, observation, detect=None, min_snr=50, use_mask=False, percentile=25, thresh=0.5):
+    def __init__(self, observation, detect=None, min_snr=50, use_mask=False, disk_percentile=25, thresh=0.5):
         """Initialize the class
 
         Parameters
@@ -346,10 +346,11 @@ class Chi2InitParameters:
         use_mask: `bool`
             Whether to use the monotonic mask or weighted monotonicity for
             initialization.
-        percentile: `float`
-            The percentage of the overall central flux to attribute to the disk.
+        disk_percentile: `float`
+            The percentage of the overall flux to attribute to the disk.
         thresh: `float`
-            The threshold used to trim the morphology
+            The threshold used to trim the morphology,
+            so all pixels below `thresh * bg_rms` are set to zero.
         """
         self.observation = observation
         if detect is None:
@@ -374,7 +375,7 @@ class Chi2InitParameters:
         # Set the input parameters
         self.min_snr = min_snr
         self.use_mask = use_mask
-        self.percentile = percentile
+        self.disk_percentile = disk_percentile
         self.thresh = thresh
 
 
@@ -410,7 +411,7 @@ def init_main_source(center, init):
         # same algorithm as scarlet main.
         bulge_morph = morph.copy()
         disk_morph = morph
-        flux_thresh = init.percentile / 100
+        flux_thresh = init.disk_percentile / 100
         mask = disk_morph > flux_thresh
         disk_morph[mask] = flux_thresh
         bulge_morph -= flux_thresh
@@ -443,7 +444,7 @@ def init_main_source(center, init):
 
 
 def init_all_sources_main(observation, centers, detect=None,
-        min_snr=50, use_mask=False, percentile=25, thresh=0.5):
+        min_snr=50, use_mask=False, disk_percentile=25, thresh=0.5):
     """Initialize all of the sources in a blend into factorized components
 
     This function uses a set of algorithms to give similar results to the
@@ -463,10 +464,10 @@ def init_all_sources_main(observation, centers, detect=None,
     init = Chi2InitParameters(
         observation,
         detect,
-        min_snr=50,
-        use_mask=False,
-        percentile=25,
-        thresh=0.5
+        min_snr=min_snr,
+        use_mask=use_mask,
+        disk_percentile=disk_percentile,
+        thresh=thresh,
     )
     sources = []
     for center in centers:
