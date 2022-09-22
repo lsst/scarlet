@@ -665,3 +665,32 @@ def getRadialMonotonicWeights(shape, neighbor_weight="flat", center=None):
         cosNorm[mask] = 0
 
     return cosNorm
+
+
+def prox_connected(morph, centers):
+    """Remove all pixels not connected to the center of a source.
+
+    Parameters
+    ----------
+    morph: `numpy.ndarray`
+        The morphology that is being constrained.
+    centers: `list` of `tuple`
+        The `(cy, cx)` center of any sources that all pixels must be
+        connected to.
+    """
+    # Import here to avoid circular dependency
+    from .detect_pybind11 import get_connected_pixels
+    from .detect import bounds_to_bbox
+
+    result = np.zeros(morph.shape, dtype=bool)
+
+    for center in centers:
+        unchecked = np.ones(morph.shape, dtype=bool)
+        cy, cx = center
+        cy = int(cy)
+        cx = int(cx)
+        bounds = np.array([cy, cy, cx, cx]).astype(np.int32)
+        # Update the result in place with the pixels connected to this center
+        get_connected_pixels(cy, cx, morph, unchecked, result, bounds, 0)
+
+    return result * morph
