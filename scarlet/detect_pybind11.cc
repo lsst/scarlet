@@ -171,24 +171,6 @@ std::vector<Peak> get_peaks(
         i++;
     }
 
-
-
-    auto p1 = peaks.begin();
-    while (peaks.size() > 1 && p1 != std::prev(peaks.end())){
-        auto p2 = std::next(p1);
-        while (p2 != peaks.end()){
-            double dy = p1->getY()-p2->getY();
-            double dx = p1->getX()-p2->getX();
-            double separation2 = dy*dy + dx*dx;
-            if(separation2 < min_separation2){
-                p2 = peaks.erase(p2);
-            } else {
-                ++p2;
-            }
-        }
-        p1++;
-    }
-
     assert(peaks.size() > 0);
 
     return peaks;
