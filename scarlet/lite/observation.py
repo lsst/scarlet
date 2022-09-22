@@ -1,0 +1,151 @@
+import numpy as np
+
+from .. import fft, interpolation
+from ..bbox import Box
+from ..renderer import convolve
+
+
+class LiteObservation:
+    """A single observation
+
+    This is effectively a combination of the `Observation` and
+    `Renderer` class from base scarlet, greatly simplified due
+    to the assumptions that the observations are all resampled
+    onto the same pixel grid and that the `images` contain all
+    of the information for all of the model bands.
+    """
+    def __init__(self, images, variance, weights, psfs, model_psf=None, noise_rms=None,
+                 bbox=None, padding=3, convolution_mode="fft"):
+        self.images = images
+        self.variance = variance
+        self.weights = weights
+        # make sure that the images and psfs have the same dtype
+        if psfs.dtype != images.dtype:
+            psfs = psfs.astype(images.dtype)
+        self.psfs = psfs
+
+        assert convolution_mode in ["fft", "real"], "convolution_mode must be either 'fft' or 'real'"
+        self.mode = convolution_mode
+        if noise_rms is None:
+            noise_rms = np.array(np.mean(np.sqrt(variance), axis=(1, 2)))
+        self.noise_rms = noise_rms
+
+        # Create a difference kernel to convolve the model to the PSF
+        # in each band
+        self.model_psf = model_psf
+        self.padding = padding
+        if model_psf is not None:
+            self.diff_kernel = fft.match_psf(psfs, model_psf, padding=padding)
+            # The gradient of a convolution is another convolution,
+            # but with the flipped and transposed kernel.
+            diff_img = self.diff_kernel.image
+            self.grad_kernel = fft.Fourier(diff_img[:, ::-1, ::-1])
+        else:
+            self.diff_kernel = self.grad_kernel = None
+
+        if bbox is None:
+            self.bbox = Box(images.shape)
+        else:
+            self.bbox = bbox
+
+    def convolve(self, image, mode=None, grad=False):
+        """Convolve the model into the observed seeing in each band.
+
+        Parameters
+        ----------
+        image: `~numpy.array`
+            The image to convolve
+        mode: `str`
+            The convolution mode to use.
+            This should be "real" or "fft" or `None`,
+            where `None` will use the default `convolution_mode`
+            specified during init.
+        grad: `bool`
+            Whether this is a backward gradient convolution
+            (`grad==True`) or a pure convolution with the PSF.
+        """
+        if grad:
+            kernel = self.grad_kernel
+        else:
+            kernel = self.diff_kernel
+
+        if kernel is None:
+            return image
+
+        if mode is None:
+            mode = self.mode
+        if mode == "fft":
+            result = fft.convolve(
+                fft.Fourier(image), kernel, axes=(1, 2),
+            ).image
+        elif mode == "real":
+            result = convolve(image, kernel.image, self.convolution_bounds)
+        else:
+            raise ValueError(f"mode must be either 'fft' or 'real', got {mode}")
+        return result
+
+    def render(self, model):
+        """Mirror of `Observation.render to make APIs match
+        """
+        return self.convolve(model)
+
+    @property
+    def data(self):
+        """Mirror of `Observation.data` to make APIs match
+        """
+        return self.images
+
+    @property
+    def shape(self):
+        """The shape of the iamges, variance, etc."""
+        return self.images.shape
+
+    @property
+    def n_bands(self):
+        """The number of bands in the observation"""
+        return self.images.shape[0]
+
+    @property
+    def dtype(self):
+        """The dtype of the observation is the dtype of the images
+        """
+        return self.images.dtype
+
+    @property
+    def convolution_bounds(self):
+        """Build the slices needed for convolution in real space
+        """
+        if not hasattr(self, "_convolution_bounds"):
+            coords = interpolation.get_filter_coords(self.diff_kernel[0])
+            self._convolution_bounds = interpolation.get_filter_bounds(
+                coords.reshape(-1, 2)
+            )
+        return self._convolution_bounds
+
+    def __getitem__(self, i):
+        """Allow the user to slice the observations with python indexing
+        """
+        images = self.images[i]
+        variance = self.variance[i]
+        weights = self.weights[i]
+        psfs = self.psfs[i]
+        noise_rms = self.noise_rms[i]
+
+        if len(images.shape) == 2:
+            images = images[None]
+            variance = variance[None]
+            weights = weights[None]
+            psfs = psfs[None]
+            noise_rms = np.array([noise_rms])
+
+        return LiteObservation(
+            images,
+            variance,
+            weights,
+            psfs,
+            model_psf=self.model_psf,
+            noise_rms=noise_rms,
+            bbox=self.bbox,
+            padding=self.padding,
+            convolution_mode=self.mode,
+        )

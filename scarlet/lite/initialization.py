@@ -8,7 +8,8 @@ from ..bbox import Box, overlapped_slices
 from ..initialization import trim_morphology
 from ..parameter import relative_step
 from .measure import calculate_snr
-from .models import LiteSource, LiteFactorizedComponent, LiteComponent
+from .blend import LiteSource
+from .component import LiteFactorizedComponent, LiteComponent
 from .parameters import AdaproxParameter, FistaParameter
 from .utils import project_morph_to_center, insert_image
 

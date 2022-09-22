@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 from ..display import *
-from .models import LiteBlend
+
 
 def _add_markers(src, extent, ax, add_markers, add_boxes, marker_kwargs, box_kwargs):
     if add_markers and hasattr(src, "center") and src.center is not None:
