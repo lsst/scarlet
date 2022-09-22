@@ -10,6 +10,7 @@ from ..bbox import overlapped_slices
 from ..parameter import relative_step
 from .. import initialization
 from ..constraint import MonotonicityConstraint
+from ..operator import prox_connected
 
 
 # Some operations fail at the origin in radial coordinates,
@@ -263,6 +264,134 @@ class LiteFactorizedComponent(LiteComponent):
 
     def __repr__(self):
         return "LiteFactorizedComponent"
+
+
+class SedComponent(LiteComponent):
+    """Implements a free-form component component
+
+    With no constraints this component is typically either a garbage collector,
+    or part of a set of components to deconvolve an image by separating out
+    the different spectral components.
+    """
+    def __init__(self, sed, morph, model_bbox, peaks, bg_thresh=None, bg_rms=None, floor=1e-20):
+        """Initialize the component.
+
+        See `~LiteComponent` for the rest of the parameters.
+
+        Parameters
+        ----------
+        model_bbox: `~scarlet.bbox.Box`
+            The `Box` that contains the model.
+            This is simplified from the main scarlet, where the model exists
+            in a `frame`, which primarily exists because not all
+            observations in main scarlet will use the same set of bands.
+        peaks: `list` of `tuple`
+            A set of ``(cy, cx)`` peaks for detected sources.
+            If peak is not ``None`` then only pixels in the same "footprint"
+            as one of the peaks are included in the morphology.
+            If `peaks` is ``None`` then there is no constraint applied.
+        floor: `float`
+            Minimum value of the SED or center morphology pixel.
+        """
+        cy = (model_bbox.shape[0]-1)//2
+        cx = (model_bbox.shape[1]-1)//2
+        self.floor = floor
+        self.model_bbox = model_bbox
+        self.peaks = peaks
+
+        super().__init__(
+            (cy, cx),
+            model_bbox,
+            sed,
+            morph,
+            initialized=True,
+            bg_thresh=bg_thresh,
+            bg_rms=bg_rms
+        )
+
+        # update the parameters
+        self._sed.grad = self.grad_sed
+        self._sed.prox = self.prox_sed
+        self._morph.grad = self.grad_morph
+        self._morph.prox = self.prox_morph
+        self.slices = [slice(None), slice(None)]
+
+    @property
+    def sed(self):
+        """The array of SED values"""
+        return self._sed.x
+
+    @property
+    def morph(self):
+        """The array of morphology values"""
+        return self._morph.x
+
+    def get_model(self, bbox=None):
+        """Build the model from the SED and morphology"""
+        model = self.sed[:, None, None] * self.morph[None, :, :]
+
+        if bbox is not None:
+            slices = overlapped_slices(bbox, self.bbox)
+            _model = np.zeros(bbox.shape, self.morph.dtype)
+            _model[slices[0]] = model[slices[1]]
+            model = _model
+        return model
+
+    def grad_sed(self, input_grad, sed, morph):
+        """Gradient of the SED wrt. the component model"""
+        _grad = np.zeros(self.bbox.shape, dtype=self.morph.dtype)
+        _grad[self.slices[1]] = input_grad[self.slices[0]]
+        return np.einsum("...jk,jk", _grad, morph)
+
+    def grad_morph(self, input_grad, morph, sed):
+        """Gradient of the morph wrt. the component model"""
+        _grad = np.zeros(self.bbox.shape, dtype=self.morph.dtype)
+        _grad[self.slices[1]] = input_grad[self.slices[0]]
+        return np.einsum("i,i...", sed, _grad)
+
+    def prox_sed(self, sed, prox_step=0):
+        """Apply a prox-like update to the SED"""
+        # prevent divergent SED
+        sed[sed < self.floor] = self.floor
+        # Normalize the SED
+        sed = sed/np.sum(sed)
+        return sed
+
+    def prox_morph(self, morph, prox_step=0):
+        """Apply a prox-like update to the morphology"""
+        if self.bg_thresh is not None:
+            bg_thresh = self.bg_rms * self.bg_thresh
+            # Enforce background thresholding
+            model = self.sed[:, None, None] * morph[None, :, :]
+            morph[np.all(model < bg_thresh[:, None, None], axis=0)] = 0
+        else:
+            # enforce positivity
+            morph[morph < 0] = 0
+
+        if self.peaks is not None:
+            morph = prox_connected(morph, self.peaks)
+
+        if np.all(morph==0):
+            morph[0,0] = self.floor
+
+        return morph
+
+    def resize(self):
+        return False
+
+    def update(self, it, input_grad):
+        """Update the SED and morphology parameters"""
+        # Store the input SED so that the morphology can
+        # have a consistent update
+        sed = self.sed.copy()
+        self._sed.update(it, input_grad, self.morph)
+        self._morph.update(it, input_grad, sed)
+
+    def __str__(self):
+        return "SedComponent"
+
+    def __repr__(self):
+        return "SedComponent"
 
 
 def gaussian2d(params, ellipse):
