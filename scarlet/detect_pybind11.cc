@@ -59,6 +59,29 @@ void get_connected_pixels(
 }
 
 
+/// Proximal operator to trim pixels not connected to one of the source centers.
+template <typename M>
+MatrixB get_connected_multipeak(
+    Eigen::Ref<const M> image,
+    const std::vector<std::vector<int>> centers,
+    const double thresh=0
+){
+    const int height = image.rows();
+    const int width = image.cols();
+    MatrixB unchecked = MatrixB::Ones(height, width);
+    MatrixB footprint = MatrixB::Zero(height, width);
+
+    for(auto center=begin(centers); center!=end(centers); ++center){
+        const int y = (*center)[0];
+        const int x = (*center)[1];
+        Bounds bounds; bounds << y, y, x, x;
+        get_connected_pixels(y, x, image, unchecked, footprint, bounds, thresh);
+    }
+
+    return footprint;
+}
+
+
 /// A Peak in a Footprint
 /// This class is meant to keep track of both the position and
 /// flux at the location of a maximum in a Footprint
@@ -278,6 +301,11 @@ PYBIND11_MODULE(detect_pybind11, mod) {
           "Create a boolean mask for pixels that are connected");
   mod.def("get_connected_pixels", &get_connected_pixels<MatrixD>,
           "Create a boolean mask for pixels that are connected");
+
+  mod.def("get_connected_multipeak", &get_connected_multipeak<MatrixF>,
+          "Trim pixels not conencted to a center from a list of centers");
+  mod.def("get_connected_multipeak", &get_connected_multipeak<MatrixD>,
+          "Trim pixels not conencted to a center from a list of centers");
 
   mod.def("get_peaks", &get_peaks<MatrixF>,
           "Get a list of peaks in a footprint created by get_connected_pixels");

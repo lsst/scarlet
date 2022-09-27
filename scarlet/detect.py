@@ -112,6 +112,28 @@ def draw_footprint_box(footprint, ax):
     draw_box(box, ax, "k")
 
 
+def scarletFootprintsToImage(footprints, shape):
+    """Convert a set of scarlet footprints to a pixelized image.
+
+    Parameters
+    ----------
+    footprints: `list` of `scarlet.detect_pybind11.Footprint`
+        The footprints to convert into an iamge.
+    shape: `tuple` of `int`
+        The shape of the image that is created from the footprints.
+
+    Returns
+    -------
+    result: `~numpy.ndarray`
+        The image created from the footprints.
+    """
+    result = np.zeros(shape, dtype=int)
+    for k, fp in enumerate(footprints):
+        bbox = bounds_to_bbox(fp.bounds)
+        result[bbox.slices] += fp.footprint * (k+1)
+    return result
+
+
 class QuadTreeRegion:
     """An implementation of a QuadTree that inserts boxes as opposed to points
     """

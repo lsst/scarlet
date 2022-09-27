@@ -10,7 +10,8 @@ from ..bbox import overlapped_slices
 from ..parameter import relative_step
 from .. import initialization
 from ..constraint import MonotonicityConstraint
-from ..operator import prox_connected
+from ..detect_pybind11 import get_connected_multipeak, get_footprints
+from ..detect import scarletFootprintsToImage
 
 
 # Some operations fail at the origin in radial coordinates,
@@ -273,7 +274,7 @@ class SedComponent(LiteComponent):
     or part of a set of components to deconvolve an image by separating out
     the different spectral components.
     """
-    def __init__(self, sed, morph, model_bbox, peaks, bg_thresh=None, bg_rms=None, floor=1e-20):
+    def __init__(self, sed, morph, model_bbox, bg_thresh=None, bg_rms=None, floor=1e-20, peaks=None, min_area=0):
         """Initialize the component.
 
         See `~LiteComponent` for the rest of the parameters.
@@ -298,6 +299,7 @@ class SedComponent(LiteComponent):
         self.floor = floor
         self.model_bbox = model_bbox
         self.peaks = peaks
+        self.min_area = min_area
 
         super().__init__(
             (cy, cx),
@@ -369,7 +371,12 @@ class SedComponent(LiteComponent):
             morph[morph < 0] = 0
 
         if self.peaks is not None:
-            morph = prox_connected(morph, self.peaks)
+            #morph = prox_connected(morph, self.peaks)
+            morph = morph * get_connected_multipeak(morph, self.peaks, 0)
+
+        if self.min_area > 0:
+            footprints = get_footprints(morph>0, 4.0, self.min_area, 0, False)
+            morph = morph * (scarletFootprintsToImage(footprints, morph.shape) > 0)
 
         if np.all(morph==0):
             morph[0,0] = self.floor
