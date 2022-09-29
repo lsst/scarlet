@@ -183,6 +183,7 @@ def show_scene(
 
 def show_sources(
     blend,
+    sources=None,
     norm=None,
     channel_map=None,
     show_model=True,
@@ -196,7 +197,8 @@ def show_sources(
     use_flux=False,
 ):
     observation = blend.observation
-    sources = blend.sources
+    if sources is None:
+        sources = blend.sources
     panels = sum((show_model, show_observed, show_rendered, show_spectrum))
     n_sources = len([src for src in sources if not src.is_null])
     bbox = observation.bbox
@@ -209,7 +211,7 @@ def show_sources(
     box_kwargs = {"facecolor": "none", "edgecolor": "w", "lw": 0.5}
 
     skipped = 0
-    for k, src in enumerate(blend.sources):
+    for k, src in enumerate(sources):
         if src.is_null:
             skipped += 1
             continue

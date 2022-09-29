@@ -499,7 +499,7 @@ def get_blend_structures(detect):
     all_footprints = []
 
     for scale, _detect in enumerate(detect[:-1]):
-        footprints = get_footprints(_detect, min_separation=0, min_area=4, thresh=0)
+        footprints = get_footprints(_detect, min_separation=0, min_area=4, thresh=0, find_peaks=True)
         all_footprints.append(footprints)
 
     low, middle = all_footprints[:2]

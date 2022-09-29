@@ -318,34 +318,142 @@ def init_fista_component(center, bbox, sed, morph, observation, bg_thresh=None):
     return component
 
 
+class Chi2InitParameters:
+    """Parameters used to initialize all sources with chi^2 detections
+
+    There are a large number of parameters that are universal for all of the
+    sources being initialized from the same set of observed images.
+    To simplify the API those parameters are all initialized by this class
+    and passed to `init_main_source` for each source.
+    It also creates temporary objects that only need to be created once for
+    all of the sources in a blend.
+    """
+    def __init__(self, observation, detect=None, min_snr=50, use_mask=False, disk_percentile=25, thresh=0.5):
+        """Initialize the class
+
+        Parameters
+        ----------
+        observation: `scarlet.lite.LiteObservation`
+            The observation containing the blend
+        detect: `numpy.ndarray`
+            The array that contains a 2D image used for detection.
+        centers: `list` of `tuple`
+            The coordinates of all the peak locations to use for initializing sources.
+        min_snr: `float`
+            The minimum SNR required per component.
+            So a 2-component source requires at least `2*min_snr` while sources
+            with SNR < `min_snr` will be initialized with the PSF.
+        use_mask: `bool`
+            Whether to use the monotonic mask or weighted monotonicity for
+            initialization.
+        disk_percentile: `float`
+            The percentage of the overall flux to attribute to the disk.
+        thresh: `float`
+            The threshold used to trim the morphology,
+            so all pixels below `thresh * bg_rms` are set to zero.
+        """
+        self.observation = observation
+        if detect is None:
+            # Build the morphology detection image
+            detect = np.sum(observation.images/(observation.noise_rms**2)[:, None, None], axis=0)
+        self.detect = detect
+        # Convolve the detection image.
+        # This may seem counter-intuitive, since this is effectively growing the model,
+        # but this is exactly what convolution will do to the model in each iteration.
+        # So we create the convolved model in order to correctly set the SED.
+        self.convolved = observation.convolve(
+            np.repeat(detect[None, :, :], observation.shape[0], axis=0), mode="real")
+        # Get the model PSF
+        self.model_psf = observation.model_psf[0]
+        # Convolve the PSF in order to set the SED of a point source correctly.
+        self.convolved_psf = observation.convolve(
+            np.repeat(observation.model_psf, observation.images.shape[0], axis=0), mode="real")
+        # Get the "SED" of the PSF
+        self.py = self.model_psf.shape[0]//2
+        self.px = self.model_psf.shape[1]//2
+        self.psf_sed = self.convolved_psf[:, self.py, self.px]
+        # Set the input parameters
+        self.min_snr = min_snr
+        self.use_mask = use_mask
+        self.disk_percentile = disk_percentile
+        self.thresh = thresh
+
+
+def init_main_source(center, init):
+    """
+    """
+    # Calculate the signal to noise at the center of this source
+    snr = np.floor(calculate_snr(
+        init.observation.images,
+        init.observation.variance,
+        init.observation.psfs,
+        center,
+    ))
+    component_snr = snr / init.min_snr
+
+    # Initialize the bbox, morph, sed for a single component source
+    bbox, morph, sed = bbox, morph, sed = init_main_parameters(
+        init.detect, center, init.observation, init.convolved, init.use_mask, init.thresh)
+
+    if morph is None:
+        # There wasn't sufficient flux for an extended source,
+        # so create a PSF source.
+        sed_center = (slice(None), center[0], center[1])
+        sed = init.observation.images[sed_center] / init.psf_sed
+        sed[sed < 0] = 0
+        morph = init.model_psf.copy()
+        morph = morph/np.max(morph)
+        bbox = Box(init.model_psf.shape, origin=(center[0]-init.py, center[1]-init.px))
+        components = [LiteComponent(center, init.observation.bbox[0] @ bbox, sed, morph)]
+    elif component_snr >= 2:
+        # There was enough flux for a 2-component source,
+        # so split the single component model into two components, using the
+        # same algorithm as scarlet main.
+        bulge_morph = morph.copy()
+        disk_morph = morph
+        flux_thresh = init.disk_percentile / 100
+        mask = disk_morph > flux_thresh
+        disk_morph[mask] = flux_thresh
+        bulge_morph -= flux_thresh
+        bulge_morph[bulge_morph < 0] = 0
+
+        if bulge_morph is None or disk_morph is None:
+            if bulge_morph is None:
+                if disk_morph is None:
+                    return None
+                morph = disk_morph
+            else:
+                morph = bulge_morph
+            # One of the components was null,
+            # so initialize as a single component
+            components = [LiteComponent(center, init.observation.bbox @ bbox, sed, morph)]
+        else:
+            bulge_morph /= np.max(bulge_morph)
+            disk_morph /= np.max(disk_morph)
+
+            bulge_sed, disk_sed = multifit_seds(init.observation, [bulge_morph, disk_morph], [bbox, bbox])
+
+            components = [
+                LiteComponent(center, init.observation.bbox[0] @ bbox, bulge_sed, bulge_morph),
+                LiteComponent(center, init.observation.bbox[0] @ bbox, disk_sed, disk_morph),
+            ]
+    else:
+        components = [LiteComponent(center, init.observation.bbox[0] @ bbox, sed, morph)]
+
+    return LiteSource(components, init.observation.dtype)
+
+
 def init_all_sources_main(observation, centers, detect=None,
-        min_snr=50, use_mask=False, percentile=25, thresh=0.5):
-    """Initialize all of the sources in a blend into factrized components
+        min_snr=50, use_mask=False, disk_percentile=25, thresh=0.5):
+    """Initialize all of the sources in a blend into factorized components
 
     This function uses a set of algorithms to give similar results to the
     algorithms in scarlet main to give nearly identical resulting sed and
     morphology arrays without creating all of the intermediate scarlet
     objects.
 
-    Parameters
-    ----------
-    observation: `scarlet.lite.LiteObservation`
-        The observation containing the blend
-    detect: `numpy.ndarray`
-        The array that contains a 2D image used for detection.
-    centers: `list` of `tuple`
-        The coordinates of all the peak locations to use for initializing sources.
-    min_snr: `float`
-        The minimum SNR required per component.
-        So a 2-component source requires at least `2*min_snr` while sources
-        with SNR < `min_snr` will be initialized with the PSF.
-    use_mask: `bool`
-        Whether to use the monotonic mask or weighted monotonicity for
-        initialization.
-    percentile: `float`
-        The percentage of the overall central flux to attribute to the disk.
-    thresh: `float`
-        The threshold used to trim the morphology
+    See the parameters of `~Chi2InitParameters.__init__` for a description of
+    the parameters.
 
     Returns
     -------
@@ -353,68 +461,17 @@ def init_all_sources_main(observation, centers, detect=None,
         The list of sources in the blend.
         This includes null sources that have no components.
     """
-    if detect is None:
-        detect = np.sum(observation.images/(observation.noise_rms**2)[:, None, None], axis=0)
-    convolved = observation.convolve(np.repeat(detect[None, :, :], observation.shape[0], axis=0), mode="real")
-    model_psf = observation.model_psf[0]
-    convolved_psf = observation.convolve(
-        np.repeat(observation.model_psf,
-        observation.images.shape[0], axis=0),
-        mode="real"
+    init = Chi2InitParameters(
+        observation,
+        detect,
+        min_snr=min_snr,
+        use_mask=use_mask,
+        disk_percentile=disk_percentile,
+        thresh=thresh,
     )
-    py = model_psf.shape[0]//2
-    px = model_psf.shape[1]//2
-    psf_sed = convolved_psf[:, py, px]
-
     sources = []
     for center in centers:
-        snr = np.floor(calculate_snr(observation.images, observation.variance, observation.psfs, center))
-        component_snr = snr / min_snr
-
-        bbox, morph, sed = bbox, morph, sed = init_main_parameters(
-            detect, center, observation, convolved, use_mask, thresh)
-
-        if morph is None:
-            sed_center = (slice(None), center[0], center[1])
-            sed = observation.images[sed_center] / psf_sed
-            sed[sed<0] = 0
-            morph = model_psf.copy()
-            morph = morph/np.max(morph)
-            bbox = Box(model_psf.shape, origin=(center[0]-py, center[1]-px))
-            components = [LiteComponent(center, observation.bbox[0] @ bbox, sed, morph)]
-        elif component_snr >= 2:
-            bulge_morph = morph.copy()
-            disk_morph = morph
-            flux_thresh = percentile / 100
-            mask = disk_morph > flux_thresh
-            disk_morph[mask] = flux_thresh
-            bulge_morph -= flux_thresh
-            bulge_morph[bulge_morph < 0] = 0
-
-            if bulge_morph is None or disk_morph is None:
-                if bulge_morph is None:
-                    if disk_morph is None:
-                        return None
-                    morph = disk_morph
-                else:
-                    morph = bulge_morph
-                # One of the components was null,
-                # so initialize as a single component
-                components = [LiteComponent(center, observation.bbox @ bbox, sed, morph)]
-            else:
-                bulge_morph /= np.max(bulge_morph)
-                disk_morph /= np.max(disk_morph)
-
-                bulge_sed, disk_sed = multifit_seds(observation, [bulge_morph, disk_morph], [bbox, bbox])
-
-                components = [
-                    LiteComponent(center, observation.bbox[0] @ bbox, bulge_sed, bulge_morph),
-                    LiteComponent(center, observation.bbox[0] @ bbox, disk_sed, disk_morph),
-                ]
-        else:
-            components = [LiteComponent(center, observation.bbox[0] @ bbox, sed, morph)]
-
-        source = LiteSource(components, observation.dtype)
+        source = init_main_source(center, init)
         sources.append(source)
     return sources
 
