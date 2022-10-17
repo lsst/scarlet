@@ -371,8 +371,7 @@ class SedComponent(LiteComponent):
             morph[morph < 0] = 0
 
         if self.peaks is not None:
-            #morph = prox_connected(morph, self.peaks)
-            morph = morph * get_connected_multipeak(morph, self.peaks, 0)
+            morph = morph * get_connected_multipeak(morph>0, self.peaks, 0)
 
         if self.min_area > 0:
             footprints = get_footprints(morph>0, 4.0, self.min_area, 0, False)

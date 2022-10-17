@@ -297,11 +297,15 @@ PYBIND11_MODULE(detect_pybind11, mod) {
 
   mod.doc() = "Fast detection algorithms implemented in C++";
 
+  mod.def("get_connected_pixels", &get_connected_pixels<MatrixB>,
+          "Create a boolean mask for pixels that are connected");
   mod.def("get_connected_pixels", &get_connected_pixels<MatrixF>,
           "Create a boolean mask for pixels that are connected");
   mod.def("get_connected_pixels", &get_connected_pixels<MatrixD>,
           "Create a boolean mask for pixels that are connected");
 
+  mod.def("get_connected_multipeak", &get_connected_multipeak<MatrixB>,
+          "Trim pixels not conencted to a center from a list of centers");
   mod.def("get_connected_multipeak", &get_connected_multipeak<MatrixF>,
           "Trim pixels not conencted to a center from a list of centers");
   mod.def("get_connected_multipeak", &get_connected_multipeak<MatrixD>,
