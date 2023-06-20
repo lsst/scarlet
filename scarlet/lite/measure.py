@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 
 from ..bbox import Box, overlapped_slices
@@ -82,9 +83,9 @@ def weight_sources(blend, mask_footprint=True):
         slices = overlapped_slices(observation.bbox, bbox)
         numerator = _model[slices[1]]
         denominator = model[slices[0]]
-        with np.warnings.catch_warnings():
-            np.warnings.filterwarnings("ignore", r"invalid value encountered")
-            np.warnings.filterwarnings("ignore", r"divide by zero")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", r"invalid value encountered")
+            warnings.filterwarnings("ignore", r"divide by zero")
             ratio = numerator / denominator
         ratio[denominator == 0] = 0
         # sometimes numerical errors can cause a hot pixel to have a slightly
