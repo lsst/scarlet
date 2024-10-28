@@ -219,6 +219,7 @@ class LiteFactorizedComponent(LiteComponent):
         """Apply a prox-like update to the SED"""
         # prevent divergent SED
         sed[sed < self.floor] = self.floor
+        sed[~np.isfinite(sed)] = self.floor
         return sed
 
     def prox_morph(self, morph, prox_step=0):
@@ -235,6 +236,8 @@ class LiteFactorizedComponent(LiteComponent):
             # enforce positivity
             morph[morph < 0] = 0
 
+        # Ensure that the morphology is finite
+        morph[~np.isfinite(morph)] = 0
         # prevent divergent morphology
         shape = morph.shape
         center = (shape[0] // 2, shape[1] // 2)
